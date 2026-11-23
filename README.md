@@ -34,7 +34,17 @@ Completed sessions track six answer skills: technical accuracy, communication cl
 
 7. Open `http://localhost:5173`. In development without Resend/SMTP credentials, OTPs are shown in the app and logged by the backend; they are never returned this way in production.
 
-The API health check is at `http://localhost:5000/api/health`. For a deployed frontend, set `CLIENT_URL` to its origin; for a deployed backend, set `VITE_API_URL` in the frontend build environment.
+The API health check is at `http://localhost:5000/api/health`.
+
+## Deploy the full app on Vercel
+
+The repository is configured as one Vercel project: the frontend is built to `frontend/dist`, and `/api/*` requests are handled by the Express function in `api/[...path].js`.
+
+1. Import the repository into Vercel and set the project root directory to the repository root.
+2. Keep the configured install command (`npm ci --include=optional`) and build command (`npm run build`); the output directory is `frontend/dist`.
+3. Add the backend environment variables in Vercel Project Settings. Required: `MONGO_URI`, `JWT_WEB_TOKEN`, `GEMINI_API_KEY`, and `RESENDEMAIL_API_KEY` (or the SMTP settings). `REDIS_URI` and `HEYGEN_API_KEY` are optional.
+4. Set `CLIENT_URL` to `https://useinterviewpro.vercel.app`. Leave `VITE_API_URL` unset or set it to `/api` so the frontend calls the API on the same domain.
+5. Redeploy after setting environment variables. Store secrets only in Vercel Project Settings; `.env` files are excluded from Git and Vercel CLI uploads.
 
 ## LiveAvatar video
 
