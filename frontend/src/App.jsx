@@ -17,34 +17,61 @@ const SKILL_DIMENSIONS = [
   { key: "languageFluency", label: "Language fluency" },
 ];
 
+function logInterviewApiError(method, path, status, message) {
+  if (!path.startsWith("/interviews")) return;
+  const endpoint = path.replace(/\/[a-f\d]{24}(?=\/|$)/gi, "/:id");
+  console.error("Interview API error:", { method, endpoint, status, message });
+}
+
 async function request(path, { token, ...options } = {}) {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  const method = options.method || "GET";
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    logInterviewApiError(method, path, "network", error.message);
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || "Something went wrong. Please try again.");
+  if (!response.ok) {
+    const message = data.message || "Something went wrong. Please try again.";
+    logInterviewApiError(method, path, response.status, message);
+    throw new Error(message);
+  }
   return data;
 }
 
 async function requestStream(path, { token, body, onEvent }) {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    body,
-    headers: {
-      ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      Accept: "text/event-stream",
-    },
-  });
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      body,
+      headers: {
+        ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Accept: "text/event-stream",
+      },
+    });
+  } catch (error) {
+    logInterviewApiError("POST", path, "network", error.message);
+    throw error;
+  }
   const contentType = response.headers.get("content-type") || "";
   if (!response.ok || !contentType.includes("text/event-stream")) {
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message || "Something went wrong. Please try again.");
+    if (!response.ok) {
+      const message = data.message || "Something went wrong. Please try again.";
+      logInterviewApiError("POST", path, response.status, message);
+      throw new Error(message);
+    }
     return data;
   }
   if (!response.body) throw new Error("Streaming is unavailable in this browser. Please try again.");
@@ -67,7 +94,11 @@ async function requestStream(path, { token, body, onEvent }) {
     } catch {
       throw new Error("The server returned an invalid streaming response.");
     }
-    if (event === "error") throw new Error(payload.message || "Could not submit your answer. Please try again.");
+    if (event === "error") {
+      const message = payload.message || "Could not submit your answer. Please try again.";
+      logInterviewApiError("POST", path, response.status, message);
+      throw new Error(message);
+    }
     if (event === "result") result = payload;
     onEvent?.(event, payload);
   }
@@ -1114,6 +1145,7 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
       if (!active) return;
       avatarConnectionFailedRef.current = true;
       const message = error?.message || "The live avatar could not connect.";
+      console.error("LiveAvatar synchronization error:", error);
       avatarErrorRef.current = message;
       setAvatarState("unavailable");
       updateAvatarMessage(message);
@@ -1469,18 +1501,26 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
           ? `${coachName}'s live avatar could not synchronize: ${reason}. Playing Gemini voice with the coach portrait.`
           : `${coachName}'s live avatar did not become ready in time. Playing Gemini voice with the coach portrait.`);
       }
-      const response = await fetch(`${API_URL}/interviews/speech`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ text: text.slice(0, 3000), voiceStyle: interview.voiceStyle, language: interview.language || "English" }),
-        signal: abortController.signal,
-      });
+      let response;
+      try {
+        response = await fetch(`${API_URL}/interviews/speech`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ text: text.slice(0, 3000), voiceStyle: interview.voiceStyle, language: interview.language || "English" }),
+          signal: abortController.signal,
+        });
+      } catch (error) {
+        if (error.name !== "AbortError") logInterviewApiError("POST", "/interviews/speech", "network", error.message);
+        throw error;
+      }
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || "The speech service is temporarily unavailable.");
+        const message = errorData.message || "The speech service is temporarily unavailable.";
+        logInterviewApiError("POST", "/interviews/speech", response.status, message);
+        throw new Error(message);
       }
       if (requestId !== speechRequestRef.current) return;
       if (!response.body) throw new Error("The browser could not start streamed audio playback.");
