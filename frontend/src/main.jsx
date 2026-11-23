@@ -2,8 +2,10 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
+import "./interview-enhancements.css";
 import "./error.css";
 import "./responsive.css";
+import "./dashboard.css";
 
 class AppErrorBoundary extends React.Component {
   state = { error: null };

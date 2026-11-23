@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowDownLeft, ArrowLeft, ArrowRight, Award, BriefcaseBusiness, Check,
   ChevronDown, CircleHelp, Clock3, FileText, Headphones, LoaderCircle,
-  LockKeyhole, LogOut, Mail, Menu, Mic, MicOff, Plus, Send, ShieldCheck,
+  LockKeyhole, LogOut, Mail, Maximize, Menu, Mic, MicOff, Plus, Send, ShieldCheck,
   Sparkles, Trash2, Video, VideoOff, Volume2, X,
 } from "lucide-react";
 
@@ -98,12 +98,16 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [interviews, setInterviews] = useState([]);
   const [activeInterview, setActiveInterview] = useState(null);
+  const [completedInterview, setCompletedInterview] = useState(null);
   const [practiceMode, setPracticeMode] = useState("mock");
   const [cameraOn, setCameraOn] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 700);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const appShellRef = useRef(null);
+  const interviewTabHiddenRef = useRef(false);
 
   useEffect(() => {
     if (token) {
@@ -116,6 +120,29 @@ function App() {
   useEffect(() => {
     if (videoRef.current && streamRef.current) videoRef.current.srcObject = streamRef.current;
   }, [cameraOn, screen]);
+
+  useEffect(() => {
+    function updateFullscreenState() {
+      setIsFullscreen(document.fullscreenElement === appShellRef.current);
+    }
+    document.addEventListener("fullscreenchange", updateFullscreenState);
+    updateFullscreenState();
+    return () => document.removeEventListener("fullscreenchange", updateFullscreenState);
+  }, []);
+
+  useEffect(() => {
+    if (screen !== "interview") return undefined;
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        interviewTabHiddenRef.current = true;
+      } else if (interviewTabHiddenRef.current) {
+        interviewTabHiddenRef.current = false;
+        setNotice("You left the interview tab. Please return to the interview; this page cannot block other tabs or apps.");
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [screen]);
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -155,9 +182,23 @@ function App() {
     return updatedUser;
   }
 
+  async function enterFullscreen() {
+    const element = appShellRef.current;
+    if (!element?.requestFullscreen) {
+      setNotice("Fullscreen is not available in this browser. You may try again or exit the interview.");
+      return;
+    }
+    try {
+      await element.requestFullscreen();
+    } catch (error) {
+      setNotice(`Fullscreen could not be enabled: ${error.message}`);
+    }
+  }
+
   async function startInterview(formData) {
     setBusy(true);
     setNotice("");
+    void enterFullscreen();
     try {
       const { interview } = await request("/interviews", {
         token,
@@ -176,6 +217,7 @@ function App() {
   async function resumeInterview(interview) {
     setBusy(true);
     setNotice("");
+    void enterFullscreen();
     try {
       const { interview: fullInterview } = await request(`/interviews/${interview._id}`, { token });
       setActiveInterview(fullInterview);
@@ -198,7 +240,7 @@ function App() {
 
   const signedIn = Boolean(token && user);
   return (
-    <div className={`app-shell ${screen === "interview" ? "interview-mode" : ""}`}>
+    <div ref={appShellRef} className={`app-shell ${screen === "interview" ? "interview-mode" : ""}`}>
       {!signedIn ? (
         screen === "auth" ? (
           <AuthScreen
@@ -218,7 +260,7 @@ function App() {
           />
         )
       ) : (
-        <div className="workspace">
+        <div className={`workspace ${screen === "home" ? "dashboard-workspace" : ""}`}>
           <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
             <div className="sidebar-head">
               <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setScreen("home"); setSidebarOpen(false); }}>
@@ -289,9 +331,11 @@ function App() {
                   }
                 }}
                 onExit={async (finished) => {
+                  let finishedResult = null;
                   if (finished) {
                     try {
-                      await request(`/interviews/${activeInterview._id}/finish`, { token, method: "POST", body: "{}" });
+                      const { interview: finishedInterview } = await request(`/interviews/${activeInterview._id}/finish`, { token, method: "POST", body: "{}" });
+                      finishedResult = finishedInterview;
                       await refreshInterviews();
                     } catch (error) {
                       setNotice(error.message);
@@ -302,7 +346,17 @@ function App() {
                   setCameraOn(false);
                   setActiveInterview(null);
                   setScreen("home");
+                  if (finishedResult) setCompletedInterview(finishedResult);
+                  if (document.fullscreenElement === appShellRef.current) {
+                    try {
+                      await document.exitFullscreen();
+                    } catch (error) {
+                      setNotice(`Could not exit fullscreen: ${error.message}`);
+                    }
+                  }
                 }}
+                isFullscreen={isFullscreen}
+                onEnterFullscreen={enterFullscreen}
                 setNotice={setNotice}
                 notice={notice}
               />
@@ -311,6 +365,61 @@ function App() {
           {profileOpen && <ProfileModal user={user} onClose={() => setProfileOpen(false)} onSave={updateProfile} onLogout={logout} />}
         </div>
       )}
+      {completedInterview && <InterviewResultsModal interview={completedInterview} onClose={() => setCompletedInterview(null)} />}
+    </div>
+  );
+}
+
+function InterviewResultsModal({ interview, onClose }) {
+  const summary = interview.summary || {};
+  const score = Number.isFinite(summary.score) ? summary.score : null;
+  const dimensions = [
+    ["technicalAccuracy", "Technical accuracy"],
+    ["communicationClarity", "Communication clarity"],
+    ["answerStructure", "Answer structure"],
+    ["problemSolving", "Problem solving"],
+    ["roleRelevance", "Role relevance"],
+    ["languageFluency", "Language fluency"],
+  ];
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="results-modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section className="results-modal" role="dialog" aria-modal="true" aria-labelledby="results-title">
+        <button className="results-modal-close" type="button" onClick={onClose} aria-label="Close interview results"><X size={18} /></button>
+        <div className="results-modal-icon"><Award size={22} /></div>
+        <div className="eyebrow muted-eyebrow">PRACTICE COMPLETE</div>
+        <h2 id="results-title">Your interview score</h2>
+        <p className="results-role">{interview.role} · {interview.difficulty}</p>
+        <div className="results-score-ring" style={{ background: `conic-gradient(#315edb ${score ?? 0}%, #e5e7eb 0)` }}>
+          <div className="results-score-inner">{score === null ? "—" : score}<span>{score === null ? "" : "%"}</span></div>
+        </div>
+        <p className="results-overview">{summary.overview || "Your interview has been saved. Keep practicing to build your skills."}</p>
+        {Object.keys(summary.dimensionScores || {}).length > 0 && (
+          <div className="results-dimensions">
+            {dimensions.filter(([key]) => Number.isFinite(summary.dimensionScores[key])).map(([key, label]) => (
+              <div className="results-dimension" key={key}>
+                <span>{label}</span><strong>{summary.dimensionScores[key]}%</strong>
+                <div><i style={{ width: `${summary.dimensionScores[key]}%` }} /></div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="results-takeaways">
+          {summary.strengths?.length > 0 && <div><strong>Strengths</strong><ul>{summary.strengths.map((item) => <li key={item}>{item}</li>)}</ul></div>}
+          {summary.improvements?.length > 0 && <div><strong>Next to improve</strong><ul>{summary.improvements.map((item) => <li key={item}>{item}</li>)}</ul></div>}
+        </div>
+        <button className="button button-primary results-dashboard-button" type="button" onClick={onClose}>Back to dashboard <ArrowRight size={15} /></button>
+      </section>
     </div>
   );
 }
@@ -652,20 +761,31 @@ function Dashboard({ user, token, interviews, sidebarOpen, onToggleSidebar, onOp
     : 0;
   const greeting = new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 18 ? "Good afternoon" : "Good evening";
   return (
-    <div className="page-content">
+    <div className="page-content dashboard-content">
       <header className="topbar">
         <div className="dashboard-topbar-left"><button className="workspace-menu-button" type="button" aria-label={sidebarOpen ? "Collapse navigation" : "Open navigation"} aria-expanded={sidebarOpen} onClick={onToggleSidebar}><Menu size={17} /></button><div className="breadcrumb">Workspace <span>/</span> Overview</div></div>
         <div className="topbar-right"><span className="secure-tag"><ShieldCheck size={14} /> Private workspace</span><button className="dashboard-profile-button" type="button" onClick={onOpenProfile}><div className="avatar small-avatar">{user.name?.[0]?.toUpperCase()}</div><span>{user.name?.split(" ")[0]}</span><ChevronDown size={14} /></button></div>
       </header>
-      <div className="welcome-row">
-        <div><div className="eyebrow muted-eyebrow">YOUR PERSONAL INTERVIEW STUDIO</div><h1>{greeting}, {user.name?.split(" ")[0]} <span className="wave">✦</span></h1><p>Every great interview starts with a little practice.</p></div>
-        <div className="welcome-actions">
-          <button className="button button-primary" onClick={() => onNew("mock")}><Plus size={17} /> Mock interview</button>
-          <button className="button button-outline" onClick={() => onNew("guided")}><Sparkles size={16} /> Guided practice</button>
+      <section className="dashboard-hero">
+        <div className="dashboard-hero-copy">
+          <div className="dashboard-greeting">{greeting}, {user.name?.split(" ")[0]}</div>
+          <h1>Feel ready for your<br /><em>next interview.</em></h1>
+          <p>Practice out loud with your AI interviewer. Get thoughtful feedback and build confidence one answer at a time.</p>
+          <div className="dashboard-hero-actions">
+            <button className="button button-primary" onClick={() => onNew("mock")}><Plus size={17} /> Start a mock interview <ArrowRight size={15} /></button>
+            <button className="button dashboard-guided-button" onClick={() => onNew("guided")}><Sparkles size={16} /> Guided practice</button>
+          </div>
+          <div className="dashboard-privacy-note"><ShieldCheck size={15} /> Private practice, at your pace.</div>
         </div>
-      </div>
+        <aside className="dashboard-hero-visual" aria-label="Voice-first interview practice">
+          <span className="dashboard-voice-kicker">VOICE PRACTICE</span>
+          <div className="dashboard-visual-wave" aria-hidden="true">{[18, 28, 20, 42, 30, 55, 24, 46, 19, 34, 24, 50, 29, 40, 17].map((height, index) => <i key={index} style={{ height }} />)}</div>
+          <span className="dashboard-visual-caption">Practice out loud, at your pace.</span>
+        </aside>
+      </section>
       {notice && <div className="notice notice-error dashboard-notice">{notice}<button onClick={refresh} className="text-button">Retry</button></div>}
-      <div className="stats-grid">
+      <div className="dashboard-stats-heading"><span>YOUR PRACTICE AT A GLANCE</span><span>Small steps add up.</span></div>
+      <div className="stats-grid dashboard-stats-grid">
         <StatCard icon={<BriefcaseBusiness size={17} />} label="Practice sessions" value={interviews.length} sub="Keep showing up" color="purple" />
         <StatCard icon={<Award size={17} />} label="Average score" value={completed.length ? `${average}%` : "—"} sub={completed.length ? "Across completed sessions" : "Complete a session to see"} color="green" />
         <StatCard icon={<Clock3 size={17} />} label="Minutes practiced" value={interviews.reduce((sum, item) => sum + (item.duration || 0), 0)} sub="A little practice adds up" color="orange" />
@@ -685,7 +805,7 @@ function Dashboard({ user, token, interviews, sidebarOpen, onToggleSidebar, onOp
           {focusSkill && <p className="skill-focus-note"><Sparkles size={14} /> Next focus: <strong>{focusSkill.label}</strong>. Future questions adapt to your practice history.</p>}
         </section>
       )}
-      <div className="section-heading"><div><h2>Recent sessions</h2><p>Your practice history, all in one place.</p></div><button className="text-button" onClick={refresh}>Refresh <ArrowRight size={14} /></button></div>
+      <div className="section-heading dashboard-section-heading"><div><span className="dashboard-section-kicker">KEEP YOUR MOMENTUM</span><h2>Recent sessions</h2><p>Your practice history, all in one place.</p></div><button className="text-button" onClick={refresh}>Refresh <ArrowRight size={14} /></button></div>
       {interviews.length ? (
         <div className="session-list">{interviews.slice(0, 8).map((item) => (
           <div className="session-card" key={item._id}>
@@ -844,7 +964,7 @@ function SetupScreen({ token, initialMode, onBack, onStart, busy, notice, sideba
   );
 }
 
-function InterviewScreen({ interview: initialInterview, user, token, videoRef, cameraOn, toggleCamera, onExit, setNotice, notice }) {
+function InterviewScreen({ interview: initialInterview, user, token, videoRef, cameraOn, toggleCamera, onExit, isFullscreen, onEnterFullscreen, setNotice, notice }) {
   const [interview, setInterview] = useState(initialInterview);
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
@@ -856,6 +976,8 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
   const [avatarSpeechSynced, setAvatarSpeechSynced] = useState(false);
   const [avatarMessage, setAvatarMessage] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [userSpeaking, setUserSpeaking] = useState(false);
   const [seconds, setSeconds] = useState(() => {
     const duration = initialInterview.duration * 60;
     const elapsed = Math.floor((Date.now() - new Date(initialInterview.createdAt).getTime()) / 1000);
@@ -863,6 +985,9 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
   });
   const recorderRef = useRef(null);
   const microphoneStreamRef = useRef(null);
+  const microphoneAnalyserRef = useRef(null);
+  const microphoneSourceRef = useRef(null);
+  const microphoneFrameRef = useRef(null);
   const recorderChunksRef = useRef([]);
   const startingMicRef = useRef(false);
   const submitLockRef = useRef(false);
@@ -889,6 +1014,48 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
   const coachName = interview.voiceStyle === "masculine" ? "Dev" : "Maya";
   const coachImage = interview.voiceStyle === "masculine" ? "/image_boy.png" : "/image_girl.png";
   const guidedPractice = interview.mode === "guided";
+
+  function stopMicVisualization() {
+    if (microphoneFrameRef.current !== null) {
+      window.cancelAnimationFrame(microphoneFrameRef.current);
+      microphoneFrameRef.current = null;
+    }
+    microphoneSourceRef.current?.disconnect();
+    microphoneSourceRef.current = null;
+    microphoneAnalyserRef.current = null;
+    setMicLevel(0);
+    setUserSpeaking(false);
+  }
+
+  function startMicVisualization(stream) {
+    const audioContext = audioContextRef.current;
+    if (!audioContext || audioContext.state === "closed") return;
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+    microphoneAnalyserRef.current = analyser;
+    microphoneSourceRef.current = source;
+    const samples = new Uint8Array(analyser.fftSize);
+    let lastUpdate = 0;
+    const updateLevel = (now) => {
+      if (microphoneAnalyserRef.current !== analyser) return;
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (let index = 0; index < samples.length; index += 1) {
+        const sample = (samples[index] - 128) / 128;
+        sum += sample * sample;
+      }
+      const level = Math.min(1, Math.sqrt(sum / samples.length) * 3);
+      if (now - lastUpdate >= 60) {
+        setMicLevel(level);
+        setUserSpeaking(level > 0.045);
+        lastUpdate = now;
+      }
+      microphoneFrameRef.current = window.requestAnimationFrame(updateLevel);
+    };
+    microphoneFrameRef.current = window.requestAnimationFrame(updateLevel);
+  }
 
   function updateAvatarMessage(message) {
     avatarMessageRef.current = message;
@@ -1103,6 +1270,8 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
       recorderRef.current.onerror = null;
       if (recorderRef.current.state !== "inactive") recorderRef.current.stop();
     }
+    if (microphoneFrameRef.current !== null) window.cancelAnimationFrame(microphoneFrameRef.current);
+    microphoneSourceRef.current?.disconnect();
     microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
     window.speechSynthesis?.cancel();
     speechAbortRef.current?.abort();
@@ -1469,6 +1638,7 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
         if (event.data.size) recorderChunksRef.current.push(event.data);
       };
       recorder.onerror = () => {
+        stopMicVisualization();
         microphoneStream.getTracks().forEach((track) => track.stop());
         microphoneStreamRef.current = null;
         recorderRef.current = null;
@@ -1476,6 +1646,7 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
         setNotice("The microphone recording failed. Check your microphone and try again, or type your answer.");
       };
       recorder.onstop = async () => {
+        stopMicVisualization();
         microphoneStream.getTracks().forEach((track) => track.stop());
         microphoneStreamRef.current = null;
         recorderRef.current = null;
@@ -1493,10 +1664,12 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
         void submitAudioAnswer(audio);
       };
       recorder.start(250);
+      startMicVisualization(microphoneStream);
       setIsListening(true);
       setNotice("");
     } catch (error) {
       microphoneStream?.getTracks().forEach((track) => track.stop());
+      stopMicVisualization();
       const message = error.name === "NotAllowedError" || error.name === "PermissionDeniedError"
         ? "Microphone permission is blocked. Allow microphone access for this site in your browser settings, then try again. You can also type your answer."
         : error.name === "NotFoundError" || error.name === "DevicesNotFoundError"
@@ -1577,7 +1750,7 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
   const showLiveAvatar = avatarState === "ready" && Boolean(avatarTrackRef.current);
   return (
     <div className="interview-page">
-      <header className="interview-topbar"><button className="back-button" onClick={() => onExit(false)}><ArrowLeft size={16} /> Exit practice</button><div className="interview-top-title"><span className="live-dot" /> {guidedPractice ? "GUIDED PRACTICE" : "LIVE PRACTICE"} <span className="top-divider">/</span> {interview.role}</div><div className={`timer ${seconds < 60 ? "timer-warning" : ""}`}><Clock3 size={15} /> {mins}:{secs}</div></header>
+      <header className="interview-topbar"><button className="back-button" onClick={() => onExit(false)}><ArrowLeft size={16} /> Exit practice</button><div className="interview-top-title"><span className="live-dot" /> {guidedPractice ? "GUIDED PRACTICE" : "LIVE PRACTICE"} <span className="top-divider">/</span> {interview.role}</div><div className="interview-top-actions">{!isFullscreen && <button className="interview-fullscreen-button" type="button" onClick={() => { void onEnterFullscreen(); }}><Maximize size={14} /> Fullscreen</button>}<div className={`timer ${seconds < 60 ? "timer-warning" : ""}`}><Clock3 size={15} /> {mins}:{secs}</div></div></header>
       {notice && <div className="notice notice-error interview-notice">{notice}<button onClick={() => setNotice("")}><X size={14} /></button></div>}
       <div className="interview-body">
         <section className="coach-column">
@@ -1612,6 +1785,14 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
             <div className="self-video">
               {cameraOn ? <video ref={videoRef} autoPlay muted playsInline /> : <div className="self-placeholder">{initialInterview.role ? "You" : "U"}</div>}
               <span>{user.name}</span>
+              {isListening && <div className={`voice-indicator ${userSpeaking ? "speaking" : ""}`} role="status" aria-live="polite">
+                <span className="voice-wave" aria-hidden="true">{Array.from({ length: 7 }, (_, index) => {
+                  const variation = [0.58, 0.82, 1, 0.7, 0.92, 0.66, 0.48][index];
+                  const height = userSpeaking ? 4 + micLevel * variation * 27 : 3;
+                  return <i key={index} style={{ height: `${height}px` }} />;
+                })}</span>
+                <span>{userSpeaking ? "Speaking" : "Listening"}</span>
+              </div>}
             </div>
           </div>
           <div className="media-controls">
@@ -1654,6 +1835,18 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
         </section>
       </div>
       <div className="interview-footer"><span><CircleHelp size={14} /> {guidedPractice ? "Use the example as a guide; keep every detail true to your experience." : "Your answers are private. This is a practice space, not a real interview."}</span><span><span className="footer-dot" /> {interview.difficulty} · {interview.duration} min</span></div>
+      {!isFullscreen && (
+        <div className="fullscreen-interview-guard" role="dialog" aria-modal="true" aria-labelledby="fullscreen-guard-title" aria-describedby="fullscreen-guard-description">
+          <div className="fullscreen-interview-card">
+            <div className="fullscreen-interview-icon"><Maximize size={20} /></div>
+            <h2 id="fullscreen-guard-title">Fullscreen ended</h2>
+            <p id="fullscreen-guard-description">The interview is paused. Return to fullscreen to continue, or exit the interview and resume it later.</p>
+            {notice && <p className="fullscreen-interview-error" role="alert">{notice}</p>}
+            <button className="button button-primary" type="button" onClick={() => { setNotice(""); void onEnterFullscreen(); }}><Maximize size={15} /> Return to fullscreen</button>
+            <button className="fullscreen-interview-exit" type="button" onClick={() => { stopSpeech(); void onExit(false); }}><ArrowLeft size={15} /> Exit interview</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
