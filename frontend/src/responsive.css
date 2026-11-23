@@ -572,6 +572,11 @@ button:active:not(:disabled){transform:scale(.98)}
   .auth-main{padding:25px 15px 35px}
 }
 
+@media(min-width:821px){
+  .question-column{overflow-y:auto;overscroll-behavior-y:contain}
+  .answer-form,.interview-progress{flex-shrink:0}
+}
+
 .live-dot,.footer-dot,.coach-status-dot{background:#315edb;box-shadow:0 0 0 3px #315edb22}
 .coach-orb.feminine{background:radial-gradient(circle at 34% 26%,#94b4f4,#4974d6 67%,#284b9b)}
 .coach-orb.masculine{background:radial-gradient(circle at 34% 26%,#a7b3c5,#64748b 68%,#334155)}

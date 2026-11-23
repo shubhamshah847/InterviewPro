@@ -38,7 +38,7 @@ The API health check is at `http://localhost:5000/api/health`.
 
 ## Deploy the full app on Vercel
 
-The repository is configured as one Vercel project: the frontend is built to `frontend/dist`, and `/api/*` requests are handled by the Express function in `api/[...path].js`.
+The repository is configured as one Vercel project: the frontend is built to `frontend/dist`, and Vercel function entry points under `api/` forward API requests to the shared Express app in `backend/app.js`, including nested auth and interview routes.
 
 1. Import the repository into Vercel and set the project root directory to the repository root.
 2. Keep the configured install command (`npm ci --include=optional`) and build command (`npm run build`); the output directory is `frontend/dist`.

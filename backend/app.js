@@ -4,6 +4,7 @@ const connectDatabase = require("./src/config/database");
 const { connectRedis } = require("./src/config/redis");
 
 const app = express();
+app.set("trust proxy", 1);
 let servicesPromise;
 
 function initializeServices() {
