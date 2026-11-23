@@ -134,7 +134,6 @@ function getClient() {
 }
 
 function upstreamError(error) {
-  try{
   const status = Number(error.status || error.statusCode);
   const code = typeof error.code === "string"
     ? error.code
@@ -170,18 +169,13 @@ function upstreamError(error) {
   const result = new Error(message);
   result.status = quotaExceeded ? 503 : 502;
   return result;
-}catch(err){
-  return res.status(200).json({
-    message:err
-  })
-}
 }
 
 async function generateJson(prompt, schema, audio, onTextDelta) {
   let interaction;
   try {
     interaction = await getClient().interactions.create({
-      model:"gemini-3.5-flash-lite",
+      model: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
       input: audio
         ? [
           { type: "text", text: prompt },

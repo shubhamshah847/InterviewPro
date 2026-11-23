@@ -1695,6 +1695,9 @@ function InterviewScreen({ interview: initialInterview, user, token, videoRef, c
           if (event === "feedback") setStreamedFeedback(payload.text || "");
         },
       });
+      if (!data?.interview?.questions?.length) {
+        throw new Error("The interview service did not return the next question. Please try again.");
+      }
       const nextQuestion = data.interview.questions[data.interview.questions.length - 1]?.question;
       setInterview(data.interview);
       setAnswer("");

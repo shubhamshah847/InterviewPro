@@ -38,7 +38,10 @@ function handleError(error, _req, res, _next) {
     return res.status(400).json({ message: "Request body must be valid JSON." });
   }
   if (error.name === "MulterError") {
-    return res.status(400).json({ message: error.code === "LIMIT_FILE_SIZE" ? "Resume must be 5 MB or smaller." : error.message });
+    const message = error.code === "LIMIT_FILE_SIZE"
+      ? "The uploaded file is too large. Resumes must be 5 MB or smaller; recordings must be 12 MB or smaller."
+      : error.message;
+    return res.status(400).json({ message });
   }
   console.error(error);
   const status = error.status || error.statusCode || 500;
