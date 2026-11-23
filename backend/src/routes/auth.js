@@ -10,27 +10,20 @@ const sendOtpEmail = require("../utils/email");
 const { client: redisClient } = require("../config/redis");
 
 const router = express.Router();
-let authLimiter;
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ message: "Too many account requests. Please wait a few minutes and try again." }),
+  ...(redisClient ? {
+    store: new RedisStore({
+      sendCommand: (...args) => redisClient.sendCommand(args),
+    }),
+  } : {}),
+});
 
-function getAuthLimiter() {
-  if (!authLimiter) {
-    authLimiter = rateLimit({
-      windowMs: 15 * 60 * 1000,
-      limit: 30,
-      standardHeaders: true,
-      legacyHeaders: false,
-      handler: (_req, res) => res.status(429).json({ message: "Too many account requests. Please wait a few minutes and try again." }),
-      ...(redisClient ? {
-        store: new RedisStore({
-          sendCommand: (...args) => redisClient.sendCommand(args),
-        }),
-      } : {}),
-    });
-  }
-  return authLimiter;
-}
-
-router.use((req, res, next) => getAuthLimiter()(req, res, next));
+router.use(authLimiter);
 
 function otpHash(otp) {
   return crypto.createHash("sha256").update(otp).digest("hex");
